@@ -6,32 +6,37 @@
 //
 
 import Foundation
-import SwiftUI
+import Combine
 
-protocol APIBuilder{
-    var urlRequest:URLRequest { get }
-    var baseURL:URL { get }
-    var path:String { get }
+protocol NewsService{
+    func request(from endpoint:NewsAPI) ->AnyPublisher<NewsResponse, APIErrors>
 }
 
-enum NewsAPI{
-    case getNews
-}
-
-
-extension NewsAPI: APIBuilder{
-    var urlRequest: URLRequest {
-        switch self {
-        case .getNews:
-            return URLRequest(url: self.baseURL.appendingPathComponent(self.path))
-        }
-    }
-    
-    var baseURL: URL {
-        return URL(string: "https://api.lil.software")!
-    }
-    
-    var path: String {
-        return "/news"
+struct NewsServiceImpl: NewsService {
+    func request(from endpoint:NewsAPI) ->AnyPublisher<NewsResponse, APIErrors>{
+        return URLSession
+            .shared
+            .dataTaskPublisher(for: endpoint.urlRequest)
+            .receive(on: DispatchQueue.main)
+            .mapError{ _ in APIErrors.unknown}
+            .flatMap{data,response -> AnyPublisher<NewsResponse, APIErrors> in
+                guard let response = response as? HTTPURLResponse else{
+                    return Fail(error: APIErrors.unknown).eraseToAnyPublisher()
+                }
+                let jsonDecoder = JSONDecoder()
+                jsonDecoder.dateDecodingStrategy = .iso8601
+                
+                if(200...299).contains(response.statusCode){
+                    return Just(data)
+                        .decode(type: NewsResponse.self, decoder: jsonDecoder)
+                        .mapError{_ in APIErrors.decodingErrors}
+                        .eraseToAnyPublisher()
+                }else{
+                    return Fail(error: APIErrors.errorCode(response.statusCode)).eraseToAnyPublisher()
+                }
+            }
+            .eraseToAnyPublisher()
+            
+        
     }
 }
